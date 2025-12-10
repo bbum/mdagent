@@ -159,24 +159,16 @@ final class SpotlightQueryExecutor: @unchecked Sendable {
             throw QueryError.invalidScope(path)
         }
 
-        let keyAttrs: [CFString] = [
-            kMDItemDisplayName,
-            kMDItemKind,
-            kMDItemContentType,
-            kMDItemFSSize,
-            kMDItemContentModificationDate,
-            kMDItemFSCreationDate,
-            kMDItemContentCreationDate,
-            kMDItemLastUsedDate,
-            kMDItemWhereFroms,
-            kMDItemFinderComment
-        ]
+        guard let attrNames = MDItemCopyAttributeNames(mdItem) as? [String] else {
+            return "No metadata available"
+        }
 
         var lines: [String] = []
 
-        for attr in keyAttrs {
-            if let value = MDItemCopyAttribute(mdItem, attr) {
-                let shortKey = (attr as String).replacingOccurrences(of: "kMDItem", with: "")
+        for attr in attrNames.sorted() {
+            if let value = MDItemCopyAttribute(mdItem, attr as CFString) {
+                let shortKey = attr.replacingOccurrences(of: "kMDItem", with: "")
+                    .replacingOccurrences(of: "_kMDItem", with: "_")
                 lines.append("\(shortKey): \(formatValue(value))")
             }
         }

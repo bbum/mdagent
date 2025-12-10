@@ -43,28 +43,7 @@ struct Search: AsyncParsableCommand {
         let executor = SpotlightQueryExecutor()
         let parsedQuery = parseQueryShorthand(query)
         let scopes = scope?.split(separator: ",").map(String.init)
-
-        var sortBy: String? = nil
-        var descending = true
-
-        if let s = sort {
-            let clean: String
-            if s.hasPrefix("-") {
-                descending = true
-                clean = String(s.dropFirst())
-            } else {
-                descending = false
-                clean = s
-            }
-
-            switch clean {
-            case "name": sortBy = kMDItemFSName as String
-            case "date": sortBy = kMDItemContentModificationDate as String
-            case "size": sortBy = kMDItemFSSize as String
-            case "created": sortBy = kMDItemFSCreationDate as String
-            default: sortBy = clean
-            }
-        }
+        let (sortBy, descending) = parseSortSpec(sort)
 
         let results = try await executor.execute(
             query: parsedQuery,
@@ -74,27 +53,14 @@ struct Search: AsyncParsableCommand {
             descending: descending
         )
 
-        switch format {
-        case "paths":
-            for r in results { print(r.path) }
-        case "full":
-            for r in results {
-                var parts = [r.path]
-                if let kind = r.kind { parts.append("kind:\(kind)") }
-                if let size = r.size { parts.append("size:\(size)") }
-                if let mod = r.modified {
-                    parts.append("mod:\(ISO8601DateFormatter().string(from: mod))")
-                }
-                print(parts.joined(separator: " | "))
-            }
-        case "json":
+        if format == "json" {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(results)
             print(String(data: data, encoding: .utf8)!)
-        default: // compact
-            for r in results { print(r.compact) }
+        } else {
+            print(formatResults(results, format: format))
         }
     }
 }
@@ -132,57 +98,11 @@ struct Meta: AsyncParsableCommand {
     @Argument(help: "File path")
     var path: String
 
-    @Flag(name: .shortAndLong, help: "Show all attributes")
-    var all: Bool = false
-
     mutating func run() async throws {
         let expandedPath = (path as NSString).expandingTildeInPath
-        guard let mdItem = MDItemCreate(kCFAllocatorDefault, expandedPath as CFString) else {
-            throw ValidationError("Could not access file: \(path)")
-        }
-
-        if all {
-            guard let attrs = MDItemCopyAttributeNames(mdItem) as? [String] else {
-                throw ValidationError("Could not read attribute names")
-            }
-            for attr in attrs.sorted() {
-                if let value = MDItemCopyAttribute(mdItem, attr as CFString) {
-                    print("\(attr): \(formatValue(value))")
-                }
-            }
-        } else {
-            let keyAttrs = [
-                kMDItemDisplayName,
-                kMDItemKind,
-                kMDItemContentType,
-                kMDItemFSSize,
-                kMDItemContentModificationDate,
-                kMDItemFSCreationDate,
-                kMDItemLastUsedDate,
-                kMDItemWhereFroms,
-                kMDItemFinderComment
-            ] as [CFString]
-
-            for attr in keyAttrs {
-                if let value = MDItemCopyAttribute(mdItem, attr) {
-                    let shortKey = (attr as String).replacingOccurrences(of: "kMDItem", with: "")
-                    print("\(shortKey): \(formatValue(value))")
-                }
-            }
-        }
-    }
-
-    private func formatValue(_ value: Any) -> String {
-        switch value {
-        case let date as Date:
-            return ISO8601DateFormatter().string(from: date)
-        case let array as [Any]:
-            return array.map { "\($0)" }.joined(separator: ", ")
-        case let num as NSNumber:
-            return num.stringValue
-        default:
-            return "\(value)"
-        }
+        let executor = SpotlightQueryExecutor()
+        let result = try executor.metadata(path: expandedPath)
+        print(result)
     }
 }
 
@@ -198,11 +118,36 @@ struct MCP: AsyncParsableCommand {
 
     struct Run: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Run as MCP server (JSON-RPC over stdio)"
+            abstract: "Run as MCP server (JSON-RPC over stdio)",
+            discussion: """
+                By default, all tools are enabled: search, meta
+
+                Optionally specify tool names to enable only those tools:
+                  mdagent mcp search        # Only search tool
+                  mdagent mcp meta          # Only meta tool
+                  mdagent mcp search meta   # Both tools (same as default)
+                """
         )
 
+        @Argument(help: "Tools to enable (default: all). Valid: search, meta")
+        var tools: [String] = []
+
         mutating func run() async throws {
-            let server = await MCPServer()
+            let allTools: Set<String> = ["search", "meta"]
+            let enabledTools: Set<String>
+
+            if tools.isEmpty {
+                enabledTools = allTools
+            } else {
+                let specified = Set(tools.map { $0.lowercased() })
+                let invalid = specified.subtracting(allTools)
+                if !invalid.isEmpty {
+                    throw ValidationError("Unknown tools: \(invalid.sorted().joined(separator: ", ")). Valid: search, meta")
+                }
+                enabledTools = specified
+            }
+
+            let server = MCPServer(enabledTools: enabledTools)
             await server.run()
         }
     }
@@ -239,16 +184,20 @@ struct MCP: AsyncParsableCommand {
 
             Provides Spotlight search capabilities via CLI or MCP server.
 
-            Tools provided:
+            MCP Tools:
               • search - Search files via Spotlight queries
-              • count  - Count matching files
               • meta   - Get file metadata
 
             === Claude Code Configuration ===
 
-            Add to Claude Code with:
+            Add to Claude Code (all tools):
 
               claude mcp add mdagent -- \(resolvedPath) mcp
+
+            Add with specific tools only:
+
+              claude mcp add mdagent -- \(resolvedPath) mcp search
+              claude mcp add mdagent -- \(resolvedPath) mcp meta
 
             === Claude Desktop Configuration ===
 
@@ -262,6 +211,9 @@ struct MCP: AsyncParsableCommand {
                 }
               }
             }
+
+            For specific tools only, add tool names to args:
+              "args": ["mcp", "search"]
 
             === Query Syntax ===
 
@@ -544,4 +496,51 @@ func parseSizeString(_ str: String) -> Int64 {
     }
 
     return (Int64(numStr) ?? 0) * multiplier
+}
+
+/// Parse sort specification string into (attribute, descending) tuple
+func parseSortSpec(_ sort: String?) -> (sortBy: String?, descending: Bool) {
+    guard let sort = sort else { return (nil, true) }
+
+    let descending: Bool
+    let clean: String
+    if sort.hasPrefix("-") {
+        descending = true
+        clean = String(sort.dropFirst())
+    } else {
+        descending = false
+        clean = sort
+    }
+
+    let sortBy: String
+    switch clean {
+    case "name": sortBy = kMDItemFSName as String
+    case "date": sortBy = kMDItemContentModificationDate as String
+    case "size": sortBy = kMDItemFSSize as String
+    case "created": sortBy = kMDItemFSCreationDate as String
+    default: sortBy = clean
+    }
+
+    return (sortBy, descending)
+}
+
+/// Format search results according to format string
+func formatResults(_ results: [SpotlightResult], format: String) -> String {
+    switch format {
+    case "paths":
+        return results.map(\.path).joined(separator: "\n")
+    case "full":
+        return results.map { r in
+            var parts = [r.path]
+            if let kind = r.kind { parts.append("kind:\(kind)") }
+            if let size = r.size { parts.append("size:\(size)") }
+            if let mod = r.modified {
+                parts.append("mod:\(ISO8601DateFormatter().string(from: mod))")
+            }
+            if let ct = r.contentType { parts.append("type:\(ct)") }
+            return parts.joined(separator: " | ")
+        }.joined(separator: "\n")
+    default: // compact
+        return results.map(\.compact).joined(separator: "\n")
+    }
 }

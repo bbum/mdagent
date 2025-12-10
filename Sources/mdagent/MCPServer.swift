@@ -165,8 +165,10 @@ final class MCPServer {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let isoFormatter = ISO8601DateFormatter()
+    private let enabledTools: Set<String>
 
-    init() {
+    init(enabledTools: Set<String> = ["search", "meta"]) {
+        self.enabledTools = enabledTools
         encoder.outputFormatting = [] // Compact
         encoder.dateEncodingStrategy = .iso8601
     }
@@ -237,37 +239,42 @@ final class MCPServer {
     // MARK: - Tools List
 
     private func handleToolsList(_ request: JSONRPCRequest) -> JSONRPCResponse {
-        let searchDesc = "Spotlight search. Query: @name:*.swift @content:TODO @kind:folder @type:public.swift-source @mod:7 @size:>1M (or raw MDQuery). fmt: compact|full|paths|count."
-        let tools: JSONValue = .object([
-            "tools": .array([
-                .object([
-                    "name": .string("search"),
-                    "description": .string(searchDesc),
-                    "inputSchema": .object([
-                        "type": .string("object"),
-                        "properties": .object([
-                            "q": .object(["type": .string("string")]),
-                            "in": .object(["type": .string("string")]),
-                            "n": .object(["type": .string("integer")]),
-                            "sort": .object(["type": .string("string")]),
-                            "fmt": .object(["type": .string("string")])
-                        ]),
-                        "required": .array([.string("q")])
-                    ])
-                ]),
-                .object([
-                    "name": .string("meta"),
-                    "description": .string("Get file metadata via Spotlight."),
-                    "inputSchema": .object([
-                        "type": .string("object"),
-                        "properties": .object([
-                            "path": .object(["type": .string("string")])
-                        ]),
-                        "required": .array([.string("path")])
-                    ])
+        var toolsList: [JSONValue] = []
+
+        if enabledTools.contains("search") {
+            let searchDesc = "Spotlight search. Query: @name:*.swift @content:TODO @kind:folder @type:public.swift-source @mod:7 @size:>1M (or raw MDQuery). fmt: compact|full|paths|count."
+            toolsList.append(.object([
+                "name": .string("search"),
+                "description": .string(searchDesc),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "q": .object(["type": .string("string")]),
+                        "in": .object(["type": .string("string")]),
+                        "n": .object(["type": .string("integer")]),
+                        "sort": .object(["type": .string("string")]),
+                        "fmt": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("q")])
                 ])
-            ])
-        ])
+            ]))
+        }
+
+        if enabledTools.contains("meta") {
+            toolsList.append(.object([
+                "name": .string("meta"),
+                "description": .string("Get file metadata via Spotlight."),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "path": .object(["type": .string("string")])
+                    ]),
+                    "required": .array([.string("path")])
+                ])
+            ]))
+        }
+
+        let tools: JSONValue = .object(["tools": .array(toolsList)])
         return JSONRPCResponse(id: request.id, result: tools)
     }
 
@@ -277,6 +284,10 @@ final class MCPServer {
         guard let params = request.params?.objectValue,
               let name = params["name"]?.stringValue else {
             return JSONRPCResponse(id: request.id, error: .invalidParams("Missing tool name"))
+        }
+
+        guard enabledTools.contains(name) else {
+            return JSONRPCResponse(id: request.id, error: .methodNotFound("Tool not enabled: \(name)"))
         }
 
         let args = params["arguments"]?.objectValue ?? [:]
@@ -316,30 +327,8 @@ final class MCPServer {
         let query = parseQueryShorthand(queryInput)
         let scopes = args["in"]?.stringValue?.split(separator: ",").map(String.init)
         let limit = args["n"]?.intValue ?? 100
-        let sortSpec = args["sort"]?.stringValue
         let format = args["fmt"]?.stringValue ?? "compact"
-
-        var sortBy: String? = nil
-        var descending = true
-
-        if let sort = sortSpec {
-            let cleanSort: String
-            if sort.hasPrefix("-") {
-                descending = true
-                cleanSort = String(sort.dropFirst())
-            } else {
-                descending = false
-                cleanSort = sort
-            }
-
-            switch cleanSort {
-            case "name": sortBy = kMDItemFSName as String
-            case "date": sortBy = kMDItemContentModificationDate as String
-            case "size": sortBy = kMDItemFSSize as String
-            case "created": sortBy = kMDItemFSCreationDate as String
-            default: sortBy = cleanSort // Allow raw attribute names
-            }
-        }
+        let (sortBy, descending) = parseSortSpec(args["sort"]?.stringValue)
 
         // Handle count format separately - doesn't need full results
         if format == "count" {
@@ -355,14 +344,7 @@ final class MCPServer {
             descending: descending
         )
 
-        switch format {
-        case "paths":
-            return results.map(\.path).joined(separator: "\n")
-        case "full":
-            return formatFullResults(results)
-        default: // compact
-            return results.map(\.compact).joined(separator: "\n")
-        }
+        return formatResults(results, format: format)
     }
 
     private func executeMetadata(_ args: [String: JSONValue]) async throws -> String {
@@ -373,132 +355,4 @@ final class MCPServer {
         return try await executor.metadata(path: path)
     }
 
-    // MARK: - Helpers
-
-    private func parseQueryShorthand(_ input: String) -> String {
-        // If it starts with kMD, assume raw query
-        if input.hasPrefix("kMD") {
-            return input
-        }
-
-        var components: [String] = []
-
-        // Parse shorthand patterns
-        let patterns: [(String, (String) -> String)] = [
-            ("@name:", { QueryBuilder.filename($0) }),
-            ("@content:", { QueryBuilder.content($0) }),
-            ("@kind:", { QueryBuilder.kind($0) }),
-            ("@type:", { QueryBuilder.contentType($0) }),
-            ("@tree:", { QueryBuilder.contentTypeTree($0) }),
-            ("@mod:", { self.parseDateOrSize($0, isDate: true, isModified: true) }),
-            ("@created:", { self.parseDateOrSize($0, isDate: true, isModified: false) }),
-            ("@size:", { self.parseSizeQuery($0) })
-        ]
-
-        var remaining = input
-
-        for (prefix, builder) in patterns {
-            while let range = remaining.range(of: prefix) {
-                // Find the value after the prefix
-                let afterPrefix = remaining[range.upperBound...]
-                let endIndex = afterPrefix.firstIndex(where: { $0 == " " }) ?? afterPrefix.endIndex
-                let value = String(afterPrefix[..<endIndex])
-
-                if !value.isEmpty {
-                    components.append(builder(value))
-                }
-
-                // Remove this pattern from remaining
-                let fullRange = range.lowerBound..<(endIndex == afterPrefix.endIndex ? remaining.endIndex : remaining.index(after: endIndex))
-                remaining.removeSubrange(fullRange)
-            }
-        }
-
-        // If nothing matched, treat as filename glob
-        remaining = remaining.trimmingCharacters(in: .whitespaces)
-        if !remaining.isEmpty && components.isEmpty {
-            components.append(QueryBuilder.filename(remaining))
-        } else if !remaining.isEmpty {
-            // Leftover treated as filename pattern
-            components.append(QueryBuilder.filename(remaining))
-        }
-
-        return components.isEmpty ? "kMDItemFSName == \"*\"" : QueryBuilder.and(components.joined(separator: " && "))
-    }
-
-    private func parseDateOrSize(_ value: String, isDate: Bool, isModified: Bool) -> String {
-        if isDate {
-            // Value should be number of days
-            if let days = Int(value) {
-                return isModified ? QueryBuilder.modifiedWithinDays(days) : QueryBuilder.createdWithinDays(days)
-            }
-        }
-        return "kMDItemFSName == \"*\"" // Fallback
-    }
-
-    private func parseSizeQuery(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespaces)
-        var op = ">"
-        var sizeStr = trimmed
-
-        if trimmed.hasPrefix(">") {
-            op = ">"
-            sizeStr = String(trimmed.dropFirst())
-        } else if trimmed.hasPrefix("<") {
-            op = "<"
-            sizeStr = String(trimmed.dropFirst())
-        }
-
-        let bytes = parseSizeString(sizeStr)
-        return "kMDItemFSSize \(op) \(bytes)"
-    }
-
-    private func parseSizeString(_ str: String) -> Int64 {
-        let trimmed = str.trimmingCharacters(in: .whitespaces).uppercased()
-        var multiplier: Int64 = 1
-        var numStr = trimmed
-
-        if trimmed.hasSuffix("K") || trimmed.hasSuffix("KB") {
-            multiplier = 1024
-            numStr = trimmed.replacingOccurrences(of: "KB", with: "").replacingOccurrences(of: "K", with: "")
-        } else if trimmed.hasSuffix("M") || trimmed.hasSuffix("MB") {
-            multiplier = 1024 * 1024
-            numStr = trimmed.replacingOccurrences(of: "MB", with: "").replacingOccurrences(of: "M", with: "")
-        } else if trimmed.hasSuffix("G") || trimmed.hasSuffix("GB") {
-            multiplier = 1024 * 1024 * 1024
-            numStr = trimmed.replacingOccurrences(of: "GB", with: "").replacingOccurrences(of: "G", with: "")
-        } else if trimmed.hasSuffix("B") {
-            numStr = String(trimmed.dropLast())
-        }
-
-        return (Int64(numStr) ?? 0) * multiplier
-    }
-
-    private func formatFullResults(_ results: [SpotlightResult]) -> String {
-        var lines: [String] = []
-        for r in results {
-            var parts = [r.path]
-            if let kind = r.kind { parts.append("kind:\(kind)") }
-            if let size = r.size { parts.append("size:\(size)") }
-            if let mod = r.modified {
-                parts.append("mod:\(ISO8601DateFormatter().string(from: mod))")
-            }
-            if let ct = r.contentType { parts.append("type:\(ct)") }
-            lines.append(parts.joined(separator: " | "))
-        }
-        return lines.joined(separator: "\n")
-    }
-
-    private func formatValue(_ value: Any) -> String {
-        switch value {
-        case let date as Date:
-            return ISO8601DateFormatter().string(from: date)
-        case let array as [Any]:
-            return array.map { "\($0)" }.joined(separator: ", ")
-        case let num as NSNumber:
-            return num.stringValue
-        default:
-            return "\(value)"
-        }
-    }
 }
