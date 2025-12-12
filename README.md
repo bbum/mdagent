@@ -1,4 +1,4 @@
-# mdagent
+# spot
 
 Spotlight search MCP server for AI assistants. Wraps macOS MDQuery for fast file discovery.
 
@@ -6,28 +6,28 @@ Spotlight search MCP server for AI assistants. Wraps macOS MDQuery for fast file
 
 ```bash
 swift build -c release
-cp .build/release/mdagent ~/.local/bin/
+cp .build/release/spot ~/.local/bin/
 ```
 
 ## MCP Server
 
 Add to Claude Code:
 ```bash
-claude mcp add mdagent -- ~/.local/bin/mdagent mcp
+claude mcp add spot -- ~/.local/bin/spot mcp
 ```
 
 Add specific tools only:
 ```bash
-claude mcp add mdagent -- ~/.local/bin/mdagent mcp search
-claude mcp add mdagent -- ~/.local/bin/mdagent mcp meta
+claude mcp add spot -- ~/.local/bin/spot mcp search
+claude mcp add spot -- ~/.local/bin/spot mcp meta
 ```
 
 Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
-    "mdagent": {
-      "command": "/path/to/mdagent",
+    "spot": {
+      "command": "/path/to/spot",
       "args": ["mcp"]
     }
   }
@@ -72,15 +72,15 @@ Plain text is treated as a filename glob. Raw MDQuery syntax also supported.
 
 ```bash
 # Search
-mdagent search "*.swift"
-mdagent search "@content:TODO @type:public.swift-source" --scope ~/Developer
-mdagent search "@mod:7 @size:>100K" --format full --limit 50
+spot search "*.swift"
+spot search "@content:TODO @type:public.swift-source" --scope ~/Developer
+spot search "@mod:7 @size:>100K" --format full --limit 50
 
 # Count
-mdagent count "@kind:folder" --scope ~/Documents
+spot count "@kind:folder" --scope ~/Documents
 
 # Metadata
-mdagent meta ~/path/to/file
+spot meta ~/path/to/file
 ```
 
 ## License

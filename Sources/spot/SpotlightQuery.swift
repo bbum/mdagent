@@ -33,7 +33,7 @@ struct SpotlightResult: Codable, Sendable {
 
 /// Spotlight query execution - not an actor to avoid CoreFoundation threading issues
 final class SpotlightQueryExecutor: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "mdagent.spotlight", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "spot.spotlight", qos: .userInitiated)
 
     enum QueryError: Error, LocalizedError {
         case queryCreationFailed

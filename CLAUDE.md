@@ -13,27 +13,27 @@ swift build -c release   # Release build
 
 ```bash
 swift build -c release
-cp .build/release/mdagent ~/.local/bin/
+cp .build/release/spot ~/.local/bin/
 ```
 
 ## Test MCP Server
 
 ```bash
 # Test tools/list
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | .build/debug/mdagent mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | .build/debug/spot mcp
 
 # Test search tool
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"q":"*.swift","n":5}}}' | .build/debug/mdagent mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"q":"*.swift","n":5}}}' | .build/debug/spot mcp
 
 # Test meta tool
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"meta","arguments":{"path":"/path/to/file"}}}' | .build/debug/mdagent mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"meta","arguments":{"path":"/path/to/file"}}}' | .build/debug/spot mcp
 ```
 
 ## Architecture
 
-Three source files in `Sources/mdagent/`:
+Three source files in `Sources/spot/`:
 
-- **mdagent.swift** - CLI entry point using swift-argument-parser. Defines subcommands (`search`, `count`, `meta`, `mcp`, `schema`) and shared helper functions (`parseQueryShorthand`, `parseSortSpec`, `formatResults`).
+- **spot.swift** - CLI entry point using swift-argument-parser. Defines subcommands (`search`, `count`, `meta`, `mcp`, `schema`) and shared helper functions (`parseQueryShorthand`, `parseSortSpec`, `formatResults`).
 
 - **MCPServer.swift** - MCP protocol implementation. JSON-RPC 2.0 over stdio. Handles `initialize`, `tools/list`, `tools/call`. Uses `enabledTools: Set<String>` for tool filtering.
 
@@ -53,7 +53,7 @@ Plain text defaults to filename glob.
 
 MCP server accepts optional tool names as arguments:
 ```bash
-mdagent mcp              # All tools (search, meta)
-mdagent mcp search       # Only search
-mdagent mcp meta         # Only meta
+spot mcp              # All tools (search, meta)
+spot mcp search       # Only search
+spot mcp meta         # Only meta
 ```
