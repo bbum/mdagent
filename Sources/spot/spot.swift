@@ -30,7 +30,8 @@ func parseQueryShorthand(_ input: String) -> String {
     var remaining = input
 
     let patterns: [(String, (String) -> String)] = [
-        ("@name:", { QueryBuilder.filename($0) }),
+        ("@name=", { QueryBuilder.exactFilename($0) }),  // Exact match (must come before @name:)
+        ("@name:", { QueryBuilder.filename($0) }),       // Glob match
         ("@content:", { QueryBuilder.content($0) }),
         ("@kind:", { QueryBuilder.kind($0) }),
         ("@type:", { QueryBuilder.contentType($0) }),

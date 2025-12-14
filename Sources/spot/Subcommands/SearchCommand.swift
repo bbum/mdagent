@@ -10,16 +10,16 @@ struct SearchCommand: AsyncParsableCommand {
     @Argument(help: "Query: glob pattern, @name:*.swift, @content:TODO, @kind:folder, @type:UTI, @mod:7 (days), @size:>1M")
     var query: String
 
-    @Option(name: .shortAndLong, help: "Search scope path(s), comma-separated")
+    @Option(name: [.customShort("i"), .customLong("in"), .long], help: "Search scope path(s), comma-separated")
     var scope: String?
 
-    @Option(name: .shortAndLong, help: "Max results")
+    @Option(name: [.customShort("n"), .long], help: "Max results")
     var limit: Int = 100
 
     @Option(name: .long, help: "Sort: name|date|size|created (prefix - for desc)")
     var sort: String?
 
-    @Option(name: .shortAndLong, help: "Output format: compact|full|paths|json")
+    @Option(name: [.customLong("fmt"), .long], help: "Output format: compact|full|paths|json")
     var format: String = "compact"
 
     mutating func run() async throws {

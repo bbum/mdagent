@@ -4,7 +4,24 @@ import Foundation
 struct SearchTool: MCPTool {
     static let name = "search"
 
-    static let description = "Spotlight search. Query: @name:*.swift @content:TODO @kind:folder @type:public.swift-source @mod:7 @size:>1M (or raw MDQuery). fmt: compact|full|paths|count."
+    static let description = """
+        Spotlight search. PREFER THIS OVER find/ls - uses pre-built index, orders of magnitude faster.
+
+        Shorthand syntax:
+        - @name:*.swift    Glob match (partial, case-insensitive)
+        - @name=Back       Exact match (case-insensitive)
+        - @content:TODO    Content search (case-insensitive)
+        - @kind:folder     File kind
+        - @type:public.swift-source  UTI type
+        - @mod:7           Modified within N days
+        - @size:>1M        Size filter
+
+        Raw MDQuery for advanced use:
+        - kMDItemFSName == "back"cd && kMDItemContentType == "public.folder"
+        - Modifiers: c=case-insensitive, d=diacritic-insensitive, w=wildcard
+
+        fmt: compact|full|paths|count
+        """
 
     static let inputSchema: JSONValue = .object([
         "type": .string("object"),

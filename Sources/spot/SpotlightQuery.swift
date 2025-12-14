@@ -199,6 +199,12 @@ struct QueryBuilder {
         "kMDItemFSName == \"\(pattern)\"wc"
     }
 
+    /// Build query for exact filename match (case-insensitive)
+    static func exactFilename(_ name: String) -> String {
+        // Exact match with case+diacritic insensitivity: Back -> kMDItemFSName == "Back"cd
+        "kMDItemFSName == \"\(escapeQuery(name))\"cd"
+    }
+
     /// Build query for content search
     static func content(_ text: String) -> String {
         "kMDItemTextContent == \"*\(escapeQuery(text))*\"cd"

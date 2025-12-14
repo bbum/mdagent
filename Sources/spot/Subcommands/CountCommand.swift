@@ -10,7 +10,7 @@ struct CountCommand: AsyncParsableCommand {
     @Argument(help: "Query (same format as search)")
     var query: String
 
-    @Option(name: .shortAndLong, help: "Search scope path(s)")
+    @Option(name: [.customShort("i"), .customLong("in"), .long], help: "Search scope path(s)")
     var scope: String?
 
     mutating func run() async throws {
